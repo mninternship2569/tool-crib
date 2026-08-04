@@ -381,10 +381,14 @@ tr:hover td{background:rgba(232,135,30,0.04);}
 <script>
 /* =========================================================
    DATA LAYER
+   =========================================================
+   ⚠️ ตั้งค่าตรงนี้ก่อนใช้งานจริง ⚠️
+   วาง URL ของ Google Apps Script Web App (ลงท้ายด้วย /exec) ที่ deploy ไว้
+   เป็นฐานข้อมูลกลาง — ถ้าปล่อยว่างไว้ ระบบจะบันทึกข้อมูลลงเครื่องตัวเอง
+   เท่านั้น (ใช้คนเดียวได้ แต่จะไม่เห็นข้อมูลร่วมกันกับเครื่องอื่น)
+   ดูวิธีสร้าง Apps Script backend ได้จาก DataStore.gs ที่แนบมาให้
    ========================================================= */
-const TOOLS_KEY = 'tools-data-v1';
-const CHECKOUTS_KEY = 'checkout-records-v1';
-const SETTINGS_KEY = 'app-settings-v1';
+const API_URL = 'https://script.google.com/macros/s/AKfycbyNfCQdpQ1UMDFPAlLuykjT_C5nfjLL0nMbkPuDSK_m0BjYRTDmRVG_HcIZh5L-LK4t/exec'; // เช่น 'https://script.google.com/macros/s/AKfycb.../exec'
 
 let TOOLS = [];
 let CHECKOUTS = [];
@@ -710,38 +714,79 @@ function seedTools(){
   }));
 }
 
-/* ===== persistence ===== */
+/* ===== persistence =====
+   window.storage (used earlier) only exists inside the claude.ai artifact
+   viewer — now that this file runs standalone on GitHub Pages, that API
+   doesn't exist at all, which is why data silently failed to save/share
+   before. This version talks to a small Apps Script + Google Sheet
+   backend (see DataStore.gs) for shared data, and keeps a local cache in
+   localStorage so the app still works offline / before backend is set up.
+*/
 function seedStaff(){
   return [{id:'st_admin', name:'ผู้ดูแลระบบ', pin:'0000', role:'admin'}];
 }
-async function loadAll(){
-  try{
-    const t = await window.storage.get('tools-blob', true);
-    TOOLS = t ? JSON.parse(t.value) : seedTools();
-  }catch(e){ TOOLS = seedTools(); await saveTools(); }
-  try{
-    const c = await window.storage.get('checkouts-blob', true);
-    CHECKOUTS = c ? JSON.parse(c.value) : [];
-  }catch(e){ CHECKOUTS = []; }
-  try{
-    const s = await window.storage.get('staff-directory-blob', true);
-    STAFF = s ? JSON.parse(s.value) : seedStaff();
-  }catch(e){ STAFF = seedStaff(); await saveStaff(); }
-  try{
-    const ss = await window.storage.get('my-session', false);
-    const parsed = ss ? JSON.parse(ss.value) : null;
-    // make sure the saved session still refers to a real, still-existing staff account
-    SESSION = (parsed && STAFF.some(s=>s.id===parsed.id)) ? parsed : null;
-  }catch(e){ SESSION = null; }
+function lsGet(key){ try{ const v = localStorage.getItem(key); return v?JSON.parse(v):null; }catch(e){ return null; } }
+function lsSet(key, val){ try{ localStorage.setItem(key, JSON.stringify(val)); }catch(e){ /* storage full/unavailable */ } }
+
+let BACKEND_OK = false; // true once we've confirmed we can reach API_URL
+
+async function apiGetAll(){
+  if(!API_URL) return null;
+  const res = await fetch(API_URL + '?action=getAll', {method:'GET'});
+  if(!res.ok) throw new Error('bad response');
+  return await res.json(); // { "tools-blob": "...", "checkouts-blob": "...", "staff-directory-blob": "..." }
 }
-async function saveTools(){ try{ await window.storage.set('tools-blob', JSON.stringify(TOOLS), true); }catch(e){ toast('บันทึกสต๊อกไม่สำเร็จ ⚠️'); } }
-async function saveCheckouts(){ try{ await window.storage.set('checkouts-blob', JSON.stringify(CHECKOUTS), true); }catch(e){ toast('บันทึกรายการเบิกไม่สำเร็จ ⚠️'); } }
-async function saveStaff(){ try{ await window.storage.set('staff-directory-blob', JSON.stringify(STAFF), true); }catch(e){ toast('บันทึกรายชื่อผู้ใช้งานไม่สำเร็จ ⚠️'); } }
-async function saveSession(){
+async function apiSet(key, valueObj){
+  if(!API_URL) return false;
   try{
-    if(SESSION) await window.storage.set('my-session', JSON.stringify(SESSION), false);
-    else await window.storage.delete('my-session', false);
-  }catch(e){ /* non-fatal */ }
+    await fetch(API_URL, {
+      method:'POST',
+      headers:{'Content-Type':'text/plain;charset=utf-8'}, // avoids CORS preflight on Apps Script
+      body: JSON.stringify({key, value: JSON.stringify(valueObj)})
+    });
+    return true;
+  }catch(e){
+    return false;
+  }
+}
+
+async function loadAll(){
+  let remote = null;
+  if(API_URL){
+    try{
+      remote = await apiGetAll();
+      BACKEND_OK = true;
+    }catch(e){
+      BACKEND_OK = false;
+      toast('เชื่อมต่อฐานข้อมูลกลางไม่ได้ — ใช้ข้อมูลสำรองในเครื่องนี้ไปก่อน ⚠️');
+    }
+  }
+  TOOLS = remote && remote['tools-blob'] ? JSON.parse(remote['tools-blob']) : (lsGet('tools-blob') || seedTools());
+  CHECKOUTS = remote && remote['checkouts-blob'] ? JSON.parse(remote['checkouts-blob']) : (lsGet('checkouts-blob') || []);
+  STAFF = remote && remote['staff-directory-blob'] ? JSON.parse(remote['staff-directory-blob']) : (lsGet('staff-directory-blob') || seedStaff());
+  lsSet('tools-blob', TOOLS); lsSet('checkouts-blob', CHECKOUTS); lsSet('staff-directory-blob', STAFF);
+  // session is per-device by nature — always local, never synced to the shared backend
+  SESSION = lsGet('my-session');
+  if(SESSION && !STAFF.some(s=>s.id===SESSION.id)) SESSION = null;
+}
+async function saveTools(){
+  lsSet('tools-blob', TOOLS);
+  const ok = await apiSet('tools-blob', TOOLS);
+  if(API_URL && !ok) toast('บันทึกสต๊อกไปที่เซิร์ฟเวอร์ไม่สำเร็จ (เก็บไว้ในเครื่องนี้ก่อน) ⚠️');
+}
+async function saveCheckouts(){
+  lsSet('checkouts-blob', CHECKOUTS);
+  const ok = await apiSet('checkouts-blob', CHECKOUTS);
+  if(API_URL && !ok) toast('บันทึกรายการเบิกไปที่เซิร์ฟเวอร์ไม่สำเร็จ (เก็บไว้ในเครื่องนี้ก่อน) ⚠️');
+}
+async function saveStaff(){
+  lsSet('staff-directory-blob', STAFF);
+  const ok = await apiSet('staff-directory-blob', STAFF);
+  if(API_URL && !ok) toast('บันทึกรายชื่อผู้ใช้งานไปที่เซิร์ฟเวอร์ไม่สำเร็จ (เก็บไว้ในเครื่องนี้ก่อน) ⚠️');
+}
+async function saveSession(){
+  if(SESSION) lsSet('my-session', SESSION);
+  else { try{ localStorage.removeItem('my-session'); }catch(e){} }
 }
 
 /* =========================================================
@@ -854,14 +899,11 @@ window.addEventListener('beforeinstallprompt', (e)=>{
 window.addEventListener('appinstalled', ()=>{ DEFERRED_INSTALL = null; toast('ติดตั้งแอปเรียบร้อย ✅'); });
 
 async function loadInstallDismissed(){
-  try{
-    const r = await window.storage.get('install-hint-dismissed', false);
-    INSTALL_DISMISSED = !!r;
-  }catch(e){ INSTALL_DISMISSED = false; }
+  INSTALL_DISMISSED = !!lsGet('install-hint-dismissed');
 }
 async function dismissInstallHint(){
   INSTALL_DISMISSED = true;
-  try{ await window.storage.set('install-hint-dismissed', '1', false); }catch(e){}
+  lsSet('install-hint-dismissed', true);
   renderLoginBody();
 }
 async function triggerInstall(){
@@ -1072,7 +1114,15 @@ function viewDashboard(){
   const outCount = CHECKOUTS.filter(c=>c.status==='out').reduce((s,c)=>s+c.items.reduce((a,i)=>a+i.qty,0),0);
   const overdue = getOverdue();
 
+  const backendWarning = (isAdmin() && !API_URL) ? `
+  <div class="help-box" style="border-color:#E7B4AC;background:#FBEAE7;color:#7A241A;">
+    <b>⚠️ ยังไม่ได้เชื่อมต่อฐานข้อมูลกลาง</b><br>
+    ตอนนี้ข้อมูลถูกเก็บไว้เฉพาะในเบราว์เซอร์ของเครื่องนี้เท่านั้น เครื่อง/มือถือเครื่องอื่นจะ<b>ไม่เห็นข้อมูลร่วมกัน</b>และข้อมูลอาจหายได้ถ้าล้างเบราว์เซอร์
+    ให้ตั้งค่า <span class="mono">API_URL</span> ในไฟล์ index.html ตามขั้นตอนในไฟล์ DataStore.gs แล้วอัปโหลดทับไฟล์เดิมบน GitHub Pages
+  </div>` : '';
+
   return `
+  ${backendWarning}
   <div class="stat-row">
     <div class="stat-card"><div class="stat-num">${total}</div><div class="stat-label">รายการเครื่องมือทั้งหมด</div></div>
     <div class="stat-card ok"><div class="stat-num">${total-damaged}</div><div class="stat-label">สภาพปกติ</div></div>
@@ -1539,6 +1589,15 @@ async function confirmReturn(id){
    ========================================================= */
 function viewSettings(){
   return `
+  <div class="panel">
+    <h3 class="panel-title">🔌 สถานะฐานข้อมูลกลาง</h3>
+    ${API_URL
+      ? (BACKEND_OK
+          ? `<p style="font-size:12.5px;color:var(--ok);">✅ เชื่อมต่อฐานข้อมูลกลางสำเร็จ — ข้อมูลใช้ร่วมกันทุกเครื่อง</p>`
+          : `<p style="font-size:12.5px;color:var(--hazard);">⚠️ ตั้งค่า API_URL ไว้แล้ว แต่เชื่อมต่อไม่สำเร็จในการโหลดครั้งล่าสุด (เก็บข้อมูลไว้ในเครื่องนี้ชั่วคราว) — ตรวจสอบว่า Apps Script deploy เป็น "Anyone" และลิงก์ยังใช้งานได้</p>`)
+      : `<p style="font-size:12.5px;color:var(--hazard);">⚠️ ยังไม่ได้ตั้งค่า API_URL — ข้อมูลบันทึกเฉพาะในเครื่องนี้เท่านั้น ดูวิธีตั้งค่าในไฟล์ DataStore.gs</p>`}
+  </div>
+
   <div class="panel">
     <div class="panel-head">
       <h3 class="panel-title">👥 จัดการผู้ใช้งาน</h3>
