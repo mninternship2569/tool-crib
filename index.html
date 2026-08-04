@@ -750,6 +750,79 @@ async function apiSet(key, valueObj){
   }
 }
 
+async function testBackendConnection(){
+  const lines = [];
+  lines.push('URL: '+(API_URL||'(ว่าง — ยังไม่ได้ตั้งค่า)'));
+  if(!API_URL){
+    showDiagModal(lines.join('\n'));
+    return;
+  }
+  lines.push('');
+  lines.push('--- ทดสอบ GET (อ่านข้อมูล) ---');
+  try{
+    const res = await fetch(API_URL+'?action=getAll', {method:'GET'});
+    lines.push('HTTP status: '+res.status+' '+res.statusText);
+    const text = await res.text();
+    lines.push('ความยาวข้อมูลที่ได้: '+text.length+' ตัวอักษร');
+    lines.push('ตัวอย่างข้อมูล 200 ตัวอักษรแรก:');
+    lines.push(text.slice(0,200));
+    try{
+      JSON.parse(text);
+      lines.push('✅ อ่าน/แปลง JSON สำเร็จ');
+    }catch(pe){
+      lines.push('⚠️ แปลงเป็น JSON ไม่สำเร็จ — เซิร์ฟเวอร์น่าจะตอบกลับเป็นหน้า HTML (เช่น หน้า login หรือหน้า error) แทนข้อมูลจริง');
+      lines.push('สาเหตุที่พบบ่อยที่สุด: ตอน Deploy ยังไม่ได้เลือก "Who has access: Anyone" (เลือกเป็น Only myself หรือ Anyone with Google account อยู่)');
+    }
+  }catch(e){
+    lines.push('❌ เชื่อมต่อ GET ไม่สำเร็จ: '+e.message);
+    lines.push('สาเหตุที่พบบ่อย: 1) URL พิมพ์ผิด/ไม่ครบ  2) ยังไม่ได้กด Deploy จริง (แก้โค้ดแล้วต้องกด Deploy ใหม่ทุกครั้ง)  3) เบราว์เซอร์/เครือข่ายบล็อกโดเมน script.google.com');
+  }
+  lines.push('');
+  lines.push('--- ทดสอบ POST (เขียนข้อมูลทดสอบ) ---');
+  try{
+    const res2 = await fetch(API_URL, {
+      method:'POST',
+      headers:{'Content-Type':'text/plain;charset=utf-8'},
+      body: JSON.stringify({key:'connection-test', value: JSON.stringify({ping: new Date().toISOString()})})
+    });
+    const text2 = await res2.text();
+    lines.push('HTTP status: '+res2.status+' '+res2.statusText);
+    lines.push('ตอบกลับ: '+text2.slice(0,200));
+    try{
+      const j2 = JSON.parse(text2);
+      if(j2.status==='ok') lines.push('✅ เขียนข้อมูลทดสอบสำเร็จ — backend ใช้งานได้ครบทั้งอ่านและเขียน');
+      else lines.push('⚠️ เซิร์ฟเวอร์ตอบกลับผิดปกติ: '+JSON.stringify(j2));
+    }catch(pe){
+      lines.push('⚠️ แปลงผลลัพธ์ POST เป็น JSON ไม่สำเร็จ (ดูสาเหตุด้านบน)');
+    }
+  }catch(e){
+    lines.push('❌ เชื่อมต่อ POST ไม่สำเร็จ: '+e.message);
+  }
+  showDiagModal(lines.join('\n'));
+}
+function showDiagModal(text){
+  const html = `
+  <div class="overlay" onclick="if(event.target===this)closeModal()">
+    <div class="modal wide">
+      <div class="modal-head">
+        <h3 class="modal-title">🩺 ผลการทดสอบการเชื่อมต่อ</h3>
+        <button class="close-x" onclick="closeModal()">✕</button>
+      </div>
+      <pre class="mono" id="diagText" style="white-space:pre-wrap;background:var(--paper);border:1.5px solid var(--border);border-radius:9px;padding:14px;font-size:11.5px;line-height:1.6;max-height:360px;overflow-y:auto;">${esc(text)}</pre>
+      <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:14px;">
+        <button class="btn btn-outline btn-sm" onclick="copyDiag()">📋 คัดลอกข้อความนี้</button>
+        <button class="btn btn-amber btn-sm" onclick="closeModal()">ปิด</button>
+      </div>
+    </div>
+  </div>`;
+  showModal(html);
+}
+function copyDiag(){
+  const t = document.getElementById('diagText');
+  if(!t) return;
+  navigator.clipboard?.writeText(t.textContent).then(()=>toast('คัดลอกแล้ว ✅')).catch(()=>toast('คัดลอกไม่สำเร็จ'));
+}
+
 async function loadAll(){
   let remote = null;
   if(API_URL){
@@ -1594,8 +1667,9 @@ function viewSettings(){
     ${API_URL
       ? (BACKEND_OK
           ? `<p style="font-size:12.5px;color:var(--ok);">✅ เชื่อมต่อฐานข้อมูลกลางสำเร็จ — ข้อมูลใช้ร่วมกันทุกเครื่อง</p>`
-          : `<p style="font-size:12.5px;color:var(--hazard);">⚠️ ตั้งค่า API_URL ไว้แล้ว แต่เชื่อมต่อไม่สำเร็จในการโหลดครั้งล่าสุด (เก็บข้อมูลไว้ในเครื่องนี้ชั่วคราว) — ตรวจสอบว่า Apps Script deploy เป็น "Anyone" และลิงก์ยังใช้งานได้</p>`)
+          : `<p style="font-size:12.5px;color:var(--hazard);">⚠️ ตั้งค่า API_URL ไว้แล้ว แต่เชื่อมต่อไม่สำเร็จในการโหลดครั้งล่าสุด (เก็บข้อมูลไว้ในเครื่องนี้ชั่วคราว)</p>`)
       : `<p style="font-size:12.5px;color:var(--hazard);">⚠️ ยังไม่ได้ตั้งค่า API_URL — ข้อมูลบันทึกเฉพาะในเครื่องนี้เท่านั้น ดูวิธีตั้งค่าในไฟล์ DataStore.gs</p>`}
+    <button class="btn btn-outline btn-sm" onclick="testBackendConnection()">🩺 ทดสอบการเชื่อมต่อโดยละเอียด</button>
   </div>
 
   <div class="panel">
