@@ -744,15 +744,27 @@ async function apiGetOne(key){
   const data = await res.json();
   return (data && data.value) ? JSON.parse(data.value) : null;
 }
+async function apiSetOnce(key, valueObj){
+  const res = await fetch(API_URL, {
+    method:'POST',
+    headers:{'Content-Type':'text/plain;charset=utf-8'}, // avoids CORS preflight on Apps Script
+    body: JSON.stringify({key, value: JSON.stringify(valueObj)})
+  });
+  const text = await res.text();
+  const data = JSON.parse(text); // throws if the server didn't return valid JSON (e.g. an error page)
+  return data && data.status === 'ok';
+}
 async function apiSet(key, valueObj){
   if(!API_URL) return false;
   try{
-    await fetch(API_URL, {
-      method:'POST',
-      headers:{'Content-Type':'text/plain;charset=utf-8'}, // avoids CORS preflight on Apps Script
-      body: JSON.stringify({key, value: JSON.stringify(valueObj)})
-    });
-    return true;
+    const ok = await apiSetOnce(key, valueObj);
+    if(ok) return true;
+  }catch(e){ /* fall through to retry */ }
+  // one retry after a short wait — covers the case where the server was
+  // momentarily busy (another save in progress) and returned an error
+  try{
+    await new Promise(r=>setTimeout(r, 800));
+    return await apiSetOnce(key, valueObj);
   }catch(e){
     return false;
   }
