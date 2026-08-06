@@ -1406,7 +1406,6 @@ async function saveTool(id){
     date: document.getElementById('f_date').value.trim(),
     note: document.getElementById('f_note').value.trim(),
   };
-  await refreshTools(); // pull the latest copy first so we don't overwrite someone else's concurrent edit
   if(id){
     const t = TOOLS.find(x=>x.id===id);
     if(t){
@@ -1425,7 +1424,6 @@ async function saveTool(id){
 }
 async function deleteTool(id){
   if(!confirm('ยืนยันการลบเครื่องมือนี้ออกจากคลัง?')) return;
-  await refreshTools();
   TOOLS = TOOLS.filter(t=>t.id!==id);
   await saveTools();
   closeModal(); render();
@@ -1577,14 +1575,12 @@ async function submitCheckout(){
   if(draftItems.length===0){ toast('กรุณาเลือกเครื่องมืออย่างน้อย 1 รายการ'); return; }
   if(!dueDate){ toast('กรุณาระบุกำหนดคืน'); return; }
 
-  // pull the latest stock + checkout state first — another person may have just taken the same tool
-  await refreshTools();
-  await refreshCheckouts();
+  // sanity-check availability against current local state (kept fast — no extra network round-trip)
   for(const it of draftItems){
     const t = TOOLS.find(x=>x.id===it.toolId);
     if(!t){ toast('มีเครื่องมือบางรายการถูกลบไปแล้ว กรุณาเลือกใหม่'); render(); return; }
     if(availableQty(it.toolId) < it.qty){
-      toast(`"${t.name}" เหลือไม่พอแล้ว (มีคนเบิกไปก่อนหน้านี้) กรุณาปรับจำนวนหรือเลือกใหม่ ⚠️`);
+      toast(`"${t.name}" เหลือไม่พอแล้ว กรุณาปรับจำนวนหรือเลือกใหม่ ⚠️`);
       renderDraftRows();
       return;
     }
@@ -1701,8 +1697,6 @@ async function confirmReturn(id){
   let i = 0;
   while(document.getElementById('ret_'+i)){ conditions.push(document.getElementById('ret_'+i).value); i++; }
 
-  await refreshCheckouts();
-  await refreshTools();
   const c = CHECKOUTS.find(x=>x.id===id);
   if(!c){ toast('ใบเบิกนี้ถูกแก้ไข/ลบไปแล้ว กรุณาลองใหม่ ⚠️'); closeModal(); render(); return; }
   c.items.forEach((it,idx)=>{
@@ -1872,7 +1866,6 @@ async function saveStaffForm(id){
   const role = document.getElementById('st_role').value;
   const pin = document.getElementById('st_pin').value.trim().replace(/\D/g,'').slice(0,4);
   if(pin.length!==4){ toast('กรุณาตั้ง PIN ให้ครบ 4 หลัก (บังคับทุกบัญชี)'); return; }
-  await refreshStaff();
   const existing = STAFF.find(x=>x.id===id);
   const photo = readAvatarUploadResult(existing ? existing.photo : null);
   if(id){
@@ -1894,7 +1887,6 @@ async function saveStaffForm(id){
 async function deleteStaff(id){
   if(STAFF.length<=1){ toast('ต้องมีผู้ใช้งานอย่างน้อย 1 คน'); return; }
   if(!confirm('ยืนยันการลบผู้ใช้งานนี้?')) return;
-  await refreshStaff();
   STAFF = STAFF.filter(s=>s.id!==id);
   await saveStaff();
   closeModal(); render();
@@ -1931,7 +1923,6 @@ async function saveMyProfile(){
   if(!name){ toast('กรุณากรอกชื่อ'); return; }
   const pin = document.getElementById('mp_pin').value.trim().replace(/\D/g,'').slice(0,4);
   if(pin.length!==4){ toast('กรุณาตั้ง PIN ให้ครบ 4 หลัก'); return; }
-  await refreshStaff();
   const s = STAFF.find(x=>x.id===SESSION.id);
   if(!s){ toast('ไม่พบบัญชีนี้แล้ว'); closeModal(); return; }
   const photo = readAvatarUploadResult(s.photo);
