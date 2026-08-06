@@ -733,13 +733,13 @@ let BACKEND_OK = false; // true once we've confirmed we can reach API_URL
 
 async function apiGetAll(){
   if(!API_URL) return null;
-  const res = await fetch(API_URL + '?action=getAll', {method:'GET'});
+  const res = await fetch(API_URL + '?action=getAll&_=' + Date.now(), {method:'GET', cache:'no-store'});
   if(!res.ok) throw new Error('bad response');
   return await res.json(); // { "tools-blob": "...", "checkouts-blob": "...", "staff-directory-blob": "..." }
 }
 async function apiGetOne(key){
   if(!API_URL) return null;
-  const res = await fetch(API_URL + '?action=get&key=' + encodeURIComponent(key), {method:'GET'});
+  const res = await fetch(API_URL + '?action=get&key=' + encodeURIComponent(key) + '&_=' + Date.now(), {method:'GET', cache:'no-store'});
   if(!res.ok) throw new Error('bad response');
   const data = await res.json();
   return (data && data.value) ? JSON.parse(data.value) : null;
@@ -797,7 +797,7 @@ async function testBackendConnection(){
   lines.push('');
   lines.push('--- ทดสอบ GET (อ่านข้อมูล) ---');
   try{
-    const res = await fetch(API_URL+'?action=getAll', {method:'GET'});
+    const res = await fetch(API_URL+'?action=getAll&_='+Date.now(), {method:'GET', cache:'no-store'});
     lines.push('HTTP status: '+res.status+' '+res.statusText);
     const text = await res.text();
     lines.push('ความยาวข้อมูลที่ได้: '+text.length+' ตัวอักษร');
